@@ -62,8 +62,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Publish the BUILDER stage (which ends with /stage populated), plus a
-      # final `scratch`-based image in case a consumer wants just the tree.
+      # Publish the BUILDER stage, because that is the stage whose /stage tree
+      # the consumer COPYs from. An earlier version published the `scratch`
+      # final stage and the samba build failed with
+      #   failed to calculate checksum of ref ...: "/stage/usr": not found
+      # because in the scratch image the tree lives at /usr, not /stage. Keep
+      # both halves of the contract agreeing; the README documents the COPY
+      # paths, so changing one means changing the other.
+      #
       # Tags:
       #   <ver>                 immutable, what the samba image pins
       #   <ver>-<sha7>          immutable, lets a build be identified from the
@@ -75,7 +81,7 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          target: scratch-image
+          target: builder
           platforms: linux/amd64
           push: true
           tags: |

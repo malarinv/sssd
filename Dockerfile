@@ -110,12 +110,14 @@ RUN cd /tmp/sssd-${SSSD_VER} && ./configure --prefix=/usr --sysconfdir=/etc/sssd
 # the samba image never fail for a missing path.
 RUN mkdir -p /stage/etc
 
-# Publish only the staged tree, not the whole toolchain.
+# Not published. The workflow builds `--target builder` and pushes THAT stage,
+# because the consumer COPYs `/stage/usr`, `/stage/lib` and `/stage/etc` out of
+# it - paths that only exist in the builder. Reproducing the tree at / in a
+# scratch image would publish something the samba Dockerfile cannot use
+# (verified: its build failed with `"/stage/usr": not found`).
 #
-# This target name is what the workflow's build-push-action references, and the
-# samba image's `FROM` must point at the same image: the two stages exist
-# because a consumer either wants the /stage tree (this image) or wants to
-# re-COPY it into a runtime base like debian:trixie-slim, which is what samba
-# does. Both are the same bytes.
+# Kept only so `docker build --target builder` has an obvious sibling when
+# inspecting the file. A consumer that wants the tree at / can build this
+# stage explicitly.
 FROM scratch AS scratch-image
 COPY --from=builder /stage /
