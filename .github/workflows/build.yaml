@@ -1,0 +1,90 @@
+name: Build and Publish Rootless SSSD
+
+# Mirrors malarinv/dind-runner-cache's build.yaml, which is the in-house
+# convention for a pure-artifact image repo: same registry (ghcr.io), same
+# actions (checkout@v4, setup-qemu@v3, setup-buildx@v3, build-push@v5),
+# same `ghcr.io/<owner>/<image>:<tag>` tag shape.
+#
+# WHY THIS IMAGE IS BUILT HERE AND NOT IN THE SAMBA REPO
+# ======================================================
+# It used to be stage 1 of the samba image. Combined, that build takes ~48 min
+# and exceeds the Forgejo runner's 60-minute cap (the runner is a KEDA
+# ScaledJob with activeDeadlineSeconds: 3600). Two builds died at
+# "Job was active longer than specified deadline". Here a job gets up to 6h,
+# and the samba build drops to ~3 min once it simply FROMs this image.
+#
+# The split is only useful if the consumer's image builds quickly, so the
+# consumer pins a VERSION tag, never :latest - a floating reference would put
+# the "moved pointer" problem right back in the audit trail that a pinned tarball
+# fetch used to avoid.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-sssd:
+    name: Build rootless-capable sssd
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read SSSD version
+        id: ver
+        run: |
+          # The Dockerfile's ARG is the single source of truth; do not duplicate
+          # the version here. `grep -m1` so a second ARG cannot shadow it.
+          SSSD_VER=$(grep -m1 -oP '(?<=^ARG SSSD_VER=)[0-9.]+' Dockerfile)
+          if [ -z "${SSSD_VER}" ]; then
+            echo "::error::Could not read SSSD_VER from Dockerfile"
+            exit 1
+          fi
+          echo "sssd_ver=${SSSD_VER}" >> "$GITHUB_OUTPUT"
+          echo "sssd=${SSSD_VER}" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Publish the BUILDER stage (which ends with /stage populated), plus a
+      # final `scratch`-based image in case a consumer wants just the tree.
+      # Tags:
+      #   <ver>                 immutable, what the samba image pins
+      #   <ver>-<sha7>          immutable, lets a build be identified from the
+      #                         published chart's appVersion
+      #   latest                convenience only; never consumed by the samba
+      #                         Dockerfile, which pins by version.
+      - name: Build and Push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          target: scratch-image
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/sssd:${{ steps.ver.outputs.sssd_ver }}
+            ghcr.io/${{ github.repository_owner }}/sssd:${{ steps.ver.outputs.sssd_ver }}-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/sssd:latest
+          labels: |
+            org.opencontainers.image.title=sssd
+            org.opencontainers.image.description=Rootless-capable SSSD built from the upstream release tarball
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.ver.outputs.sssd_ver }}
+            org.opencontainers.image.revision=${{ github.sha }}
