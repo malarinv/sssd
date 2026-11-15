@@ -82,7 +82,15 @@ jobs:
           context: .
           file: Dockerfile
           target: builder
-          platforms: linux/amd64
+          # Both platforms the consumers' CI needs. The Forgejo compliance
+          # runner executes its job container as linux/arm64, and
+          # `docker buildx build --check` in its build-verification step
+          # resolves the FROM image's manifest for the job's own platform —
+          # an amd64-only manifest fails that check with
+          #   ERROR: no match for platform in manifest ...: not found
+          # which blocks every consumer PR regardless of its own content.
+          # QEMU above makes the arm64 build work.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/sssd:${{ steps.ver.outputs.sssd_ver }}
